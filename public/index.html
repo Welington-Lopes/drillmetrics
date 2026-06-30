@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="pt-br" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GEOSOL Telemetry</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] },
+                    colors: {
+                        panel: { DEFAULT: '#0F1318', card: '#161C24', border: '#232B37', muted: '#8A99AD' },
+                        primary: { DEFAULT: '#00C2CB', dim: '#009BA3', glow: 'rgba(0,194,203,0.12)' },
+                        status: { ok: '#22C55E', warn: '#F59E0B', alert: '#F97316', critical: '#EF4444' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { font-family: 'IBM Plex Sans', sans-serif; }
+        .mono { font-family: 'IBM Plex Mono', monospace; }
+
+        /* Grid Background */
+        .grid-bg {
+            background-image:
+                linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+        .light .grid-bg {
+            background-image:
+                linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #232B37; border-radius: 2px; }
+
+        /* Inputs */
+        input[type="range"] { accent-color: #00C2CB; }
+        input, select { color-scheme: dark; }
+
+        /* Status dots */
+        .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+        /* Toast */
+        #toastContainer { pointer-events: none; }
+        .toast { pointer-events: all; transition: all 0.3s ease; }
+
+        /* Light mode overrides */
+        html:not(.dark) body { background: #F0F2F5; color: #1A2233; }
+        html:not(.dark) .sidebar { background: #FFFFFF; border-color: #DDE3EB; }
+        html:not(.dark) .main-header { background: #FFFFFF; border-color: #DDE3EB; }
+        html:not(.dark) .kpi-card { background: #FFFFFF; border-color: #DDE3EB; }
+        html:not(.dark) .panel-card { background: #FFFFFF; border-color: #DDE3EB; }
+        html:not(.dark) .modal-box { background: #FFFFFF; border-color: #DDE3EB; }
+        html:not(.dark) input, html:not(.dark) select { background: #F0F2F5; border-color: #DDE3EB; color: #1A2233; color-scheme: light; }
+
+        /* Pulse animation for critical */
+        @keyframes pulse-red { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+        .pulse-critical { animation: pulse-red 1s infinite; }
+
+        /* Sonda item active */
+        .sonda-item.active { background: rgba(0,194,203,0.12); border-color: rgba(0,194,203,0.35); color: #00C2CB; }
+        .sonda-item { border: 1px solid transparent; }
+        .sonda-item:hover:not(.active) { background: rgba(255,255,255,0.04); border-color: #232B37; }
+        html:not(.dark) .sonda-item:hover:not(.active) { background: rgba(0,0,0,0.03); border-color: #DDE3EB; }
+
+        /* Fault preset buttons */
+        .fault-btn {
+            padding: 3px 0;
+            font-size: 10px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 600;
+            border-radius: 5px;
+            border: 1px solid #232B37;
+            background: #0F1318;
+            color: #8A99AD;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .fault-btn:hover {
+            border-color: #F59E0B;
+            color: #F59E0B;
+            background: rgba(245,158,11,0.08);
+        }
+        .fault-btn--critical {
+            border-color: rgba(239,68,68,0.3);
+            color: #EF4444;
+            background: rgba(239,68,68,0.06);
+        }
+        .fault-btn--critical:hover {
+            border-color: #EF4444;
+            background: rgba(239,68,68,0.15);
+        }
+        .fault-btn.active-preset {
+            border-color: #00C2CB;
+            color: #00C2CB;
+            background: rgba(0,194,203,0.12);
+        }
+        .fault-btn--critical.active-preset {
+            border-color: #EF4444;
+            color: #EF4444;
+            background: rgba(239,68,68,0.18);
+        }
+    </style>
+</head>
+<body class="bg-panel text-gray-100 h-screen overflow-hidden dark">
+
+    <!-- ===== LOGIN ===== -->
+    <div id="loginScreen" class="fixed inset-0 z-[100] bg-panel flex items-center justify-center p-4 grid-bg">
+        <div class="w-full max-w-sm">
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center gap-3 mb-3">
+                    <div class="w-8 h-8 rounded bg-primary flex items-center justify-center">
+                        <i class="bi bi-activity text-black text-sm font-bold"></i>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight text-white">GEOSOL <span class="text-primary">Telemetry</span></span>
+                </div>
+                <p class="text-panel-muted text-xs mono">INTEGRADrillMetrics-MG · v5.6</p>
+            </div>
+
+            <div class="bg-panel-card border border-panel-border rounded-xl p-8 shadow-2xl">
+                <h2 class="text-sm font-semibold text-gray-300 mb-6">Acesso ao Sistema</h2>
+                <form id="loginForm" class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-panel-muted mb-1.5 font-medium">E-mail Corporativo</label>
+                        <input type="email" id="loginEmail" required autocomplete="username"
+                            class="w-full bg-panel border border-panel-border rounded-lg px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all text-gray-100">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-panel-muted mb-1.5 font-medium">Senha</label>
+                        <input type="password" id="loginSenha" required autocomplete="current-password"
+                            class="w-full bg-panel border border-panel-border rounded-lg px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all text-gray-100">
+                    </div>
+                    <button type="submit"
+                        class="w-full bg-primary hover:bg-primary-dim text-black font-semibold py-2.5 rounded-lg text-sm transition-colors mt-2">
+                        Entrar
+                    </button>
+                </form>
+                <p id="loginError" class="hidden text-status-critical text-xs text-center mt-3"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== APP LAYOUT ===== -->
+    <div id="appLayout" class="hidden flex h-full">
+
+        <!-- SIDEBAR -->
+        <aside class="sidebar w-64 bg-panel-card border-r border-panel-border flex flex-col z-20 flex-shrink-0">
+            <!-- Brand -->
+            <div class="px-5 h-14 flex items-center justify-between border-b border-panel-border">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-6 h-6 rounded bg-primary flex items-center justify-center flex-shrink-0">
+                        <i class="bi bi-activity text-black text-xs"></i>
+                    </div>
+                    <span class="font-bold text-sm tracking-tight text-white">GEOSOL <span class="text-primary">TM</span></span>
+                </div>
+                <button onclick="toggleTheme()" class="w-7 h-7 rounded flex items-center justify-center hover:bg-panel-border transition-colors" title="Alternar tema">
+                    <i id="themeIcon" class="bi bi-sun text-status-warn text-sm"></i>
+                </button>
+            </div>
+
+            <!-- User info -->
+            <div class="px-4 py-4 border-b border-panel-border">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center flex-shrink-0">
+                        <span id="userAvatar" class="text-primary text-xs font-bold mono">A</span>
+                    </div>
+                    <div class="min-w-0">
+                        <p id="userName" class="text-sm font-semibold truncate text-gray-100">Usuário</p>
+                        <p id="userRole" class="text-[10px] text-panel-muted mono uppercase tracking-wider">Cargo</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters + Sonda List -->
+            <div class="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+                <div>
+                    <label class="block text-[10px] text-panel-muted uppercase tracking-widest font-semibold mb-2 px-1">Praça de Perfuração</label>
+                    <select id="filterPraca"
+                        class="w-full bg-panel border border-panel-border rounded-lg px-3 py-2 text-xs font-medium outline-none focus:border-primary transition-all text-gray-200">
+                        <option value="">Todas as Praças</option>
+                    </select>
+                </div>
+
+                <div>
+                    <div class="flex items-center justify-between px-1 mb-2">
+                        <label class="text-[10px] text-panel-muted uppercase tracking-widest font-semibold">Sondas</label>
+                        <span id="sondaCount" class="text-[10px] mono text-panel-muted">0</span>
+                    </div>
+                    <div id="sondaList" class="space-y-1"></div>
+                </div>
+
+                <!-- Admin tools -->
+                <div id="adminTools" class="hidden border-t border-panel-border pt-4 space-y-1">
+                    <label class="block text-[10px] text-panel-muted uppercase tracking-widest font-semibold px-1 mb-2">Administração</label>
+                    <button onclick="openUserModal()"
+                        class="w-full text-left px-3 py-2 text-xs font-medium hover:bg-panel-border rounded-lg flex items-center gap-2.5 transition-colors text-gray-300">
+                        <i class="bi bi-person-plus text-primary text-sm"></i> Cadastrar Operador
+                    </button>
+                </div>
+            </div>
+
+            <!-- Logout -->
+            <div class="px-3 py-3 border-t border-panel-border">
+                <button onclick="logout()"
+                    class="w-full text-status-critical text-xs font-medium flex items-center justify-center gap-2 py-2 hover:bg-status-critical/10 rounded-lg transition-colors">
+                    <i class="bi bi-power text-sm"></i> Encerrar Sessão
+                </button>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 flex flex-col overflow-hidden bg-panel">
+
+            <!-- Header -->
+            <header class="main-header h-14 bg-panel-card border-b border-panel-border flex items-center justify-between px-6 z-10 flex-shrink-0">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <h2 id="currentSondaName" class="text-sm font-semibold text-gray-100 leading-tight">Selecione uma sonda</h2>
+                        <div class="flex items-center gap-1.5 mt-0.5">
+                            <div class="dot bg-status-ok" style="animation: pulse 2s infinite;"></div>
+                            <span class="text-[10px] text-panel-muted mono uppercase tracking-wider">Telemetria Ativa</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-6">
+                    <div class="text-right">
+                        <p class="text-[10px] text-panel-muted uppercase tracking-wider font-medium">Tempo de Sessão</p>
+                        <p id="uptime" class="mono text-sm font-semibold text-primary">00:00:00</p>
+                    </div>
+                    <button id="btnConfig" onclick="openConfigModal()"
+                        class="hidden w-8 h-8 flex items-center justify-center hover:bg-panel-border rounded-lg transition-colors border border-transparent hover:border-panel-border"
+                        title="Configurar parâmetros da sonda">
+                        <i class="bi bi-sliders text-panel-muted text-sm"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dashboard Body -->
+            <div class="flex-1 overflow-y-auto p-6 space-y-6 grid-bg">
+
+                <!-- KPI Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+                    <!-- RPM -->
+                    <div onclick="openDetailModal('RPM')"
+                        class="kpi-card bg-panel-card border border-panel-border rounded-xl p-5 cursor-pointer hover:border-primary/40 transition-all group">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <p class="text-[10px] text-panel-muted uppercase tracking-widest font-semibold">Rotação</p>
+                                <p class="text-[9px] text-panel-muted mono mt-0.5">RPM</p>
+                            </div>
+                            <i class="bi bi-gear text-primary/30 text-lg group-hover:text-primary/60 transition-colors"></i>
+                        </div>
+                        <div class="flex items-baseline gap-1.5">
+                            <span id="val-rpm" class="text-3xl font-bold mono text-primary">—</span>
+                            <span class="text-xs text-panel-muted">%</span>
+                        </div>
+                        <div class="h-14 mt-3 rounded overflow-hidden relative border border-primary/10">
+                            <canvas id="miniChart-rpm" class="absolute inset-0 w-full h-full"></canvas>
+                        </div>
+                        <p class="text-[9px] text-panel-muted mt-2 text-right mono">Clique para detalhar</p>
+                    </div>
+
+                    <!-- Torque -->
+                    <div onclick="openDetailModal('Torque')"
+                        class="kpi-card bg-panel-card border border-panel-border rounded-xl p-5 cursor-pointer hover:border-status-warn/40 transition-all group">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <p class="text-[10px] text-panel-muted uppercase tracking-widest font-semibold">Torque</p>
+                                <p class="text-[9px] text-panel-muted mono mt-0.5">Nm</p>
+                            </div>
+                            <i class="bi bi-arrow-repeat text-status-warn/30 text-lg group-hover:text-status-warn/60 transition-colors"></i>
+                        </div>
+                        <div class="flex items-baseline gap-1.5">
+                            <span id="val-torque" class="text-3xl font-bold mono text-status-warn">—</span>
+                            <span class="text-xs text-panel-muted">%</span>
+                        </div>
+                        <div class="h-14 mt-3 rounded overflow-hidden relative border border-status-warn/10">
+                            <canvas id="miniChart-torque" class="absolute inset-0 w-full h-full"></canvas>
+                        </div>
+                        <p class="text-[9px] text-panel-muted mt-2 text-right mono">Clique para detalhar</p>
+                    </div>
+
+                    <!-- Pressão -->
+                    <div onclick="openDetailModal('Pressao')"
+                        class="kpi-card bg-panel-card border border-panel-border rounded-xl p-5 cursor-pointer hover:border-blue-500/40 transition-all group">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <p class="text-[10px] text-panel-muted uppercase tracking-widest font-semibold">Pressão</p>
+                                <p class="text-[9px] text-panel-muted mono mt-0.5">PSI</p>
+                            </div>
+                            <i class="bi bi-speedometer2 text-blue-400/30 text-lg group-hover:text-blue-400/60 transition-colors"></i>
+                        </div>
+                        <div class="flex items-baseline gap-1.5">
+                            <span id="val-pressao" class="text-3xl font-bold mono text-blue-400">—</span>
+                            <span class="text-xs text-panel-muted">%</span>
+                        </div>
+                        <div class="h-14 mt-3 rounded overflow-hidden relative border border-blue-500/10">
+                            <canvas id="miniChart-pressao" class="absolute inset-0 w-full h-full"></canvas>
+                        </div>
+                        <p class="text-[9px] text-panel-muted mt-2 text-right mono">Clique para detalhar</p>
+                    </div>
+
+                    <!-- Temperatura -->
+                    <div onclick="openDetailModal('Temperatura')"
+                        class="kpi-card bg-panel-card border border-panel-border rounded-xl p-5 cursor-pointer hover:border-status-critical/40 transition-all group">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <p class="text-[10px] text-panel-muted uppercase tracking-widest font-semibold">Temperatura</p>
+                                <p class="text-[9px] text-panel-muted mono mt-0.5">°C</p>
+                            </div>
+                            <i class="bi bi-thermometer-half text-status-critical/30 text-lg group-hover:text-status-critical/60 transition-colors"></i>
+                        </div>
+                        <div class="flex items-baseline gap-1.5">
+                            <span id="val-temp" class="text-3xl font-bold mono text-status-critical">—</span>
+                            <span class="text-xs text-panel-muted">°C</span>
+                        </div>
+                        <div class="h-14 mt-3 rounded overflow-hidden relative border border-status-critical/10">
+                            <canvas id="miniChart-temp" class="absolute inset-0 w-full h-full"></canvas>
+                        </div>
+                        <p class="text-[9px] text-panel-muted mt-2 text-right mono">Clique para detalhar</p>
+                    </div>
+                </div>
+
+                <!-- Bottom Row: Fault Control + Log -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+                    <!-- Fault Control (Admin) -->
+                    <div id="faultControl" class="hidden panel-card bg-panel-card border border-panel-border rounded-xl p-5 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-widest">Injeção de Falhas</h3>
+                            <i class="bi bi-exclamation-octagon text-status-alert text-sm"></i>
+                        </div>
+                        <div class="space-y-4">
+
+                            <!-- Vazamento Hidráulico -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs text-gray-400 font-medium">Vazamento Hidráulico</span>
+                                    <span id="label-leak" class="text-xs mono text-panel-muted">0%</span>
+                                </div>
+                                <input id="slider-leak" type="range" min="0" max="100" value="0" class="w-full" oninput="updateFaultFromSlider('leak', this.value)">
+                                <div class="grid grid-cols-3 gap-1.5 pt-0.5">
+                                    <button onclick="setFaultPreset('leak', 25)"  class="fault-btn" data-tipo="leak" data-nivel="25">25%</button>
+                                    <button onclick="setFaultPreset('leak', 50)"  class="fault-btn" data-tipo="leak" data-nivel="50">50%</button>
+                                    <button onclick="setFaultPreset('leak', 100)" class="fault-btn fault-btn--critical" data-tipo="leak" data-nivel="100">100%</button>
+                                </div>
+                            </div>
+
+                            <!-- Filtro Obstruído -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs text-gray-400 font-medium">Filtro Obstruído</span>
+                                    <span id="label-filter" class="text-xs mono text-panel-muted">0%</span>
+                                </div>
+                                <input id="slider-filter" type="range" min="0" max="100" value="0" class="w-full" oninput="updateFaultFromSlider('filter', this.value)">
+                                <div class="grid grid-cols-3 gap-1.5 pt-0.5">
+                                    <button onclick="setFaultPreset('filter', 25)"  class="fault-btn" data-tipo="filter" data-nivel="25">25%</button>
+                                    <button onclick="setFaultPreset('filter', 50)"  class="fault-btn" data-tipo="filter" data-nivel="50">50%</button>
+                                    <button onclick="setFaultPreset('filter', 100)" class="fault-btn fault-btn--critical" data-tipo="filter" data-nivel="100">100%</button>
+                                </div>
+                            </div>
+
+                            <!-- Gás Tóxico -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs text-gray-400 font-medium">Gás Tóxico (H2S)</span>
+                                    <span id="label-gas" class="text-xs mono text-panel-muted">0%</span>
+                                </div>
+                                <input id="slider-gas" type="range" min="0" max="100" value="0" class="w-full" oninput="updateFaultFromSlider('gas', this.value)">
+                                <div class="grid grid-cols-3 gap-1.5 pt-0.5">
+                                    <button onclick="setFaultPreset('gas', 25)"  class="fault-btn" data-tipo="gas" data-nivel="25">25%</button>
+                                    <button onclick="setFaultPreset('gas', 50)"  class="fault-btn" data-tipo="gas" data-nivel="50">50%</button>
+                                    <button onclick="setFaultPreset('gas', 100)" class="fault-btn fault-btn--critical" data-tipo="gas" data-nivel="100">100%</button>
+                                </div>
+                            </div>
+
+                            <!-- Rocha Extrema -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs text-gray-400 font-medium">Rocha Extrema</span>
+                                    <span id="label-rock" class="text-xs mono text-panel-muted">0%</span>
+                                </div>
+                                <input id="slider-rock" type="range" min="0" max="100" value="0" class="w-full" oninput="updateFaultFromSlider('rock', this.value)">
+                                <div class="grid grid-cols-3 gap-1.5 pt-0.5">
+                                    <button onclick="setFaultPreset('rock', 25)"  class="fault-btn" data-tipo="rock" data-nivel="25">25%</button>
+                                    <button onclick="setFaultPreset('rock', 50)"  class="fault-btn" data-tipo="rock" data-nivel="50">50%</button>
+                                    <button onclick="setFaultPreset('rock', 100)" class="fault-btn fault-btn--critical" data-tipo="rock" data-nivel="100">100%</button>
+                                </div>
+                            </div>
+
+                        </div>
+                        <button onclick="resetFaults()"
+                            class="w-full py-2 bg-panel border border-panel-border rounded-lg text-xs font-medium text-panel-muted hover:border-status-critical hover:text-status-critical transition-all">
+                            Resetar Todas as Falhas
+                        </button>
+                    </div>
+
+                    <!-- System Log -->
+                    <div class="lg:col-span-2 panel-card bg-panel-card border border-panel-border rounded-xl p-5 flex flex-col" style="height: 340px;">
+                        <div class="flex items-center justify-between mb-4 flex-shrink-0">
+                            <div class="flex items-center gap-2">
+                                <i class="bi bi-terminal text-primary text-sm"></i>
+                                <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-widest">Log do Sistema</h3>
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                                <div class="dot bg-status-ok"></div>
+                                <span class="text-[10px] mono text-panel-muted">LIVE</span>
+                            </div>
+                        </div>
+                        <div id="systemLog" class="flex-1 overflow-y-auto space-y-1 mono text-[11px]">
+                            <p class="text-panel-muted italic">Aguardando seleção de sonda...</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ===== MODAL: Detalhe do Gráfico ===== -->
+    <div id="detailModal" class="hidden fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm">
+        <div class="modal-box bg-panel-card w-full max-w-4xl rounded-xl border border-panel-border overflow-hidden shadow-2xl">
+            <div class="px-6 py-4 border-b border-panel-border flex justify-between items-center">
+                <div>
+                    <h3 id="detailTitle" class="font-semibold text-gray-100 text-sm">Análise Detalhada</h3>
+                    <p class="text-[10px] text-panel-muted mono mt-0.5">Histórico — últimos 60 pontos</p>
+                </div>
+                <button onclick="closeDetailModal()" class="w-8 h-8 flex items-center justify-center hover:bg-panel-border rounded-lg transition-colors text-panel-muted hover:text-gray-100">
+                    <i class="bi bi-x-lg text-sm"></i>
+                </button>
+            </div>
+            <div class="p-6 h-80 grid-bg">
+                <canvas id="detailChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== MODAL: Configuração de Parâmetros ===== -->
+    <div id="configModal" class="hidden fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm">
+        <div class="modal-box bg-panel-card w-full max-w-2xl rounded-xl border border-panel-border overflow-hidden shadow-2xl">
+            <div class="px-6 py-4 border-b border-panel-border flex justify-between items-center">
+                <div>
+                    <h3 class="font-semibold text-gray-100 text-sm">Configuração de Parâmetros</h3>
+                    <p id="configSubtitle" class="text-[10px] text-panel-muted mono mt-0.5">Limites operacionais da sonda</p>
+                </div>
+                <button onclick="closeConfigModal()" class="w-8 h-8 flex items-center justify-center hover:bg-panel-border rounded-lg transition-colors text-panel-muted hover:text-gray-100">
+                    <i class="bi bi-x-lg text-sm"></i>
+                </button>
+            </div>
+            <div class="p-6 max-h-[60vh] overflow-y-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left border-b border-panel-border">
+                            <th class="pb-3 text-[10px] font-semibold text-panel-muted uppercase tracking-widest">Parâmetro</th>
+                            <th class="pb-3 text-[10px] font-semibold text-panel-muted uppercase tracking-widest">Unidade</th>
+                            <th class="pb-3 text-[10px] font-semibold text-panel-muted uppercase tracking-widest">Mínimo</th>
+                            <th class="pb-3 text-[10px] font-semibold text-panel-muted uppercase tracking-widest">Máximo</th>
+                            <th class="pb-3 text-right text-[10px] font-semibold text-panel-muted uppercase tracking-widest">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="configTableBody" class="divide-y divide-panel-border"></tbody>
+                </table>
+                <p id="configEmpty" class="hidden text-xs text-panel-muted text-center py-8 mono">Nenhum parâmetro configurado para esta sonda.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== MODAL: Cadastro de Operador ===== -->
+    <div id="userModal" class="hidden fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm">
+        <div class="modal-box bg-panel-card w-full max-w-md rounded-xl border border-panel-border overflow-hidden shadow-2xl">
+            <div class="px-6 py-4 border-b border-panel-border flex justify-between items-center">
+                <h3 class="font-semibold text-gray-100 text-sm">Cadastrar Operador</h3>
+                <button onclick="closeUserModal()" class="w-8 h-8 flex items-center justify-center hover:bg-panel-border rounded-lg transition-colors text-panel-muted hover:text-gray-100">
+                    <i class="bi bi-x-lg text-sm"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <form id="userForm" class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-panel-muted mb-1.5 font-medium">Nome Completo</label>
+                        <input type="text" id="userNameInput" required placeholder="Ex: João da Silva"
+                            class="w-full bg-panel border border-panel-border rounded-lg px-3 py-2.5 text-sm focus:border-primary focus:outline-none transition-all text-gray-100">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-panel-muted mb-1.5 font-medium">E-mail Corporativo</label>
+                        <input type="email" id="userEmailInput" required placeholder="operador@geosol.com"
+                            class="w-full bg-panel border border-panel-border rounded-lg px-3 py-2.5 text-sm focus:border-primary focus:outline-none transition-all text-gray-100">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-panel-muted mb-1.5 font-medium">Senha Temporária</label>
+                        <input type="password" id="userPassInput" required placeholder="Mínimo 6 caracteres"
+                            class="w-full bg-panel border border-panel-border rounded-lg px-3 py-2.5 text-sm focus:border-primary focus:outline-none transition-all text-gray-100">
+                    </div>
+                    <div class="pt-2 flex gap-3">
+                        <button type="button" onclick="closeUserModal()"
+                            class="flex-1 py-2.5 border border-panel-border rounded-lg text-sm text-panel-muted hover:bg-panel-border transition-colors">
+                            Cancelar
+                        </button>
+                        <button type="submit"
+                            class="flex-1 bg-primary hover:bg-primary-dim text-black font-semibold py-2.5 rounded-lg text-sm transition-colors">
+                            Cadastrar
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== ALERTA CRITICO ===== -->
+    <div id="alertOverlay" class="hidden fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md">
+        <div class="bg-panel-card border-2 border-status-critical rounded-2xl max-w-lg w-full p-8 shadow-2xl text-center">
+            <div class="w-16 h-16 rounded-xl bg-status-critical/10 border border-status-critical/40 flex items-center justify-center mx-auto mb-6 pulse-critical">
+                <i class="bi bi-exclamation-triangle-fill text-status-critical text-2xl"></i>
+            </div>
+            <h2 class="text-lg font-bold uppercase tracking-widest text-status-critical mb-1">Alerta Critico</h2>
+            <p id="alertMessage" class="text-sm text-gray-300 mt-2 mb-6">Falha detectada na sonda.</p>
+
+            <div class="bg-panel rounded-xl border border-panel-border p-5 mb-6">
+                <p class="text-[10px] text-panel-muted uppercase tracking-widest mono mb-1">Protocolo de Segurança — Tempo para confirmação</p>
+                <p id="alertTimer" class="text-5xl font-bold mono text-status-critical">30</p>
+                <p class="text-[10px] text-panel-muted mono mt-1">segundos</p>
+            </div>
+
+            <button id="btnCiente"
+                class="w-full bg-status-critical hover:bg-red-700 text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                <i class="bi bi-check-circle text-base"></i> Ciente — Confirmar Recebimento
+            </button>
+        </div>
+    </div>
+
+    <!-- ===== TOAST CONTAINER ===== -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-[300] space-y-2 w-72"></div>
+
+    <script src="js/notifications.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
